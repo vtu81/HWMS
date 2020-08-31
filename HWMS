@@ -1,0 +1,1806 @@
+#!/bin/bash
+# HWMS
+# 谢廷浩 3180101944
+
+# 请在此配置MySQL账户及密码（需要支持在localhost登录，且拥有所有表的所有权限，即拥有all privileges on *.*）
+# Please configure a MySQL account below (available from localhost & own all privileges on *.*).
+SQLUSERNAME="guest"
+SQLPASSWORD="123456"
+
+echo
+echo "----------------------------------------"
+echo "|   「HWMS」HomeWorkManagementSystem   |"
+echo "-------------written by VTU-------------"
+echo
+
+#检查语法
+if (( $# > 1 )) || (( $# == 1 )) && [[ $1 != "--initialize" ]]
+then
+    echo "If this is your first time running HWMS, you have to initialize MySQL database. Please run with:"
+    echo "  HWMS --initialize"
+    echo "Otherwise, please run with"
+    echo "  HWMS"
+    exit 0
+fi
+
+#检查数据库
+#是否已经安装了符合标准的数据库
+if ! ( mysql --version 1>/dev/null 2>&1 )
+then
+    echo "Please install MySQL Ver 8.0+ first! After that, please initialize HWMS."
+    echo ""
+    echo "If this is your first time running HWMS, you have to initialize MySQL database. Please run with:"
+    echo "  HWMS --initialize"
+    echo "Otherwise, please run with"
+    echo "  HWMS"
+    exit 0
+fi
+if ! ( mysql --version | grep -e "Ver 8.*" 1>\dev\null 2>&1 )
+then
+    echo "Please install MySQL Ver 8.0+ first! After that, please initialize HWMS."
+    echo ""
+    echo "If this is your first time running HWMS, you have to initialize MySQL database. Please run with:"
+    echo "  HWMS --initialize"
+    echo "Otherwise, please run with"
+    echo "  HWMS"
+    exit 0
+fi
+#检查账户信息是否配置成功
+if ! ( mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"show databases;" 1>/dev/null 2>&1 )
+then
+    echo "MySQL Ver 8.0+ already installed. But you have to manually configure an available MySQL account at the front of this shell script."
+    echo ""
+    echo "If this is your first time running HWMS, you have to initialize MySQL database. Please run with:"
+    echo "  HWMS --initialize"
+    echo "Otherwise, please run with"
+    echo "  HWMS"
+    exit 0
+fi
+
+#---------------------------------初始化阶段开始---------------------------------
+#选择初始化模式
+if (( $# == 1 )) && [[ $1 == '--initialize' ]]
+then
+    #检查是否已经初始化了
+    sql="use HWMS;"
+    mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 1>/dev/null 2>&1
+    #如果已经存在了
+    if [ $? = 0 ]
+    then
+        while [[ $move != y ]] && [[ $move != n ]]
+        do
+            echo "Database 'HWMS' already exists! Do you want to initialize 'HWMS'? (y/n)"
+            read -n1 -s move
+            if [[ $move == n ]]
+            then
+                echo "Initialize finished. Nothing is done."
+                exit 0
+            fi
+        done
+        
+    fi
+    #初始化数据库阶段
+    sql="drop database HWMS;" #不管是否存在，都先抹除HWMS数据库
+    mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 1>/dev/null 2>&1
+    #创建新的空HWMS数据库、相关的表
+    sql="create database HWMS;\
+        use HWMS; \
+        create table ADMIN( \
+        AID char(30) primary key, \
+        PASSWORD char(30), \
+        ANAME char(30)); \
+        create table TEACHER( \
+        TID char(30) primary key, \
+        PASSWORD char(30), \
+        TNAME char(30)); \
+        create table STUDENT( \
+        SID char(30) primary key, \
+        PASSWORD char(30), \
+        SNAME char(30)); \
+        create table COURSE( \
+        CID char(30) primary key, \
+        CNAME char(30), \
+        TID char(30)); \
+        alter table COURSE add constraint COURSE_TID_REF foreign key(TID) references TEACHER(TID) on delete cascade on update cascade; \
+        create table COURSE_INFO( \
+        CID char(30), \
+        IID int, \
+        TXT char(200)); \
+        alter table COURSE_INFO add constraint COURSE_INFO_CID_REF foreign key(CID) references COURSE(CID) on delete cascade on update cascade; \
+        create table SC( \
+        SID char(30), \
+        CID char(30)); \
+        alter table SC add constraint SC_SID_REF foreign key(SID) references STUDENT(SID) on delete cascade on update cascade; \
+        alter table SC add constraint SC_CID_REF foreign key(CID) references COURSE(CID) on delete cascade on update cascade; \
+        create table HW( \
+        CID char(30), \
+        HWID int, \
+        TXT char(200)); \
+        alter table HW add constraint HW_CID_REF foreign key(CID) references COURSE(CID) on delete cascade on update cascade;"
+    mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 1>/dev/null 2>&1
+    exitstatus=$?
+    if [ $exitstatus = 1 ]
+    then
+        echo "Something went wrong on the database!" 
+        exit 0
+    fi
+    #创建root管理员账户
+    sql="use HWMS;\
+        insert into ADMIN values ('root','123456','TOP')"
+    mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 1>/dev/null 2>&1
+    exitstatus=$?
+    if [ $exitstatus = 1 ]
+    then
+        echo "Something went wrong on the database!" 
+        exit 0
+    else
+        echo "Administrator root account initialized as"
+        echo -e "\tAID:\t\troot"
+        echo -e "\tPASSWORD:\t123456"
+        echo -e "\tANAME:\t\tTOP"
+        echo "Please use AID as username and PASSWORD as password to login. You can surely change PASSWORD and ANAME later after you login."
+    fi
+
+    echo "Initialize successfully! Please run with:"
+    echo "  HWMS"
+    exit 0
+fi
+#---------------------------------初始化阶段结束---------------------------------
+
+#---------------------------------登录阶段开始---------------------------------
+#输入用户名、密码
+# echo "Login as:"
+# read username
+username=$(whiptail --title "Login" --inputbox "Login as:" 10 60 3>&1 1>&2 2>&3)
+exitstatus=$?
+if [ $exitstatus = 1 ]
+then
+    echo "Goodbye!"
+    exit 0
+fi
+# echo "Enter password:"
+# read password
+password=$(whiptail --title "Password" --passwordbox "Enter password:" 10 60 3>&1 1>&2 2>&3)
+exitstatus=$?
+if [ $exitstatus = 1 ]
+then
+    echo "Goodbye!"
+    exit 0
+fi
+
+#依次判定账户+密码是否在管理员、教师、学生账户表中，即判定能否登录成功
+sql="use HWMS; select * from ADMIN where AID='$username' and PASSWORD='$password';"
+tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | grep "$username" | wc -w`
+if (( $tmp > 0 ))
+then
+    # echo
+    # echo "Login successfully! Hello, $username(administrator)."
+    userflag=0 #管理员 - 0
+    sql="use HWMS; select ANAME from ADMIN where AID='$username';"
+    userrealname=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | sed -n '2p'`
+else
+    sql="use HWMS; select * from TEACHER where TID='$username' and PASSWORD='$password';"
+    tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | grep "$username" | wc -w`
+    # echo $tmp
+    if (( $tmp > 0 ))
+    then
+        # echo
+        # echo "Login successfully! Hello, $username(teacher)."
+        userflag=1 #教师 - 1
+        sql="use HWMS; select TNAME from TEACHER where TID='$username';"
+        userrealname=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | sed -n '2p'`
+    else
+        sql="use HWMS; select * from STUDENT where SID='$username' and PASSWORD='$password';"
+        tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | grep "$username" | wc -w`
+        # echo $tmp
+        if (( $tmp > 0 ))
+        then
+            # echo
+            # echo "Login successfully! Hello, $username(student)."
+            userflag=2 #学生 - 2
+            sql="use HWMS; select SNAME from STUDENT where SID='$username';"
+            userrealname=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | sed -n '2p'`
+        else
+            echo "Access denied!"
+            exit 0
+        fi
+    fi
+fi
+#---------------------------------登录阶段结束---------------------------------
+
+#---------------------------函数声明区开始------------------------------
+accountOptionJudge()
+{
+    if [ $2 = 0 ]
+    then
+        table_smallname=admin
+        table_BIGNAME=ADMIN
+        table_TitleName=Administrator
+        first_letter=A
+        ID_name=AID
+        NAME_name=ANAME
+    elif [ $2 = 1 ]
+    then
+        table_smallname=teacher
+        table_BIGNAME=TEACHER
+        table_TitleName=Teacher
+        first_letter=T
+        ID_name=TID
+        NAME_name=TNAME
+    elif [ $2 = 2 ]
+    then
+        table_smallname=student
+        table_BIGNAME=STUDENT
+        table_TitleName=Student
+        first_letter=S
+        ID_name=SID
+        NAME_name=SNAME
+    fi
+
+    case "$1" in
+            1) #查看所有账户（命令行界面）
+                sql="use HWMS; select $ID_name, $NAME_name from $table_BIGNAME;"
+                echo "--------------------All $table_Title_Name Accounts--------------------"
+                mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null
+                echo "--------------------Press any key to continue--------------------"
+                read -n1 -s
+                ;;
+            2) #新建账户
+                #读取新建用户的ID、NAME、PASSWORD
+                newID=$(whiptail --title "Add $table_TitleName Account" --inputbox "New $ID_name:" 10 60 3>&1 1>&2 2>&3)
+                exitstatus=$?  
+                if [ $exitstatus = 0 ]
+                then
+                    #确认没有该ID的用户
+                    sql="use HWMS; select $ID_name from $table_BIGNAME where $ID_name='$newID';"
+                    tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | grep "$newID" | wc -w`
+                    #存在，返回
+                    if (( $tmp > 0 ))
+                    then
+                        whiptail --title "Failed" --msgbox "$table_TitleName with $ID_name '$newID' already exists!" 10 60
+                        return
+                    fi
+                    newNAME=$(whiptail --title "Add $table_TitleName Account" --inputbox "New $NAME_name:" 10 60 3>&1 1>&2 2>&3)
+                    exitstatus=$?
+                    if [ $exitstatus = 0 ]
+                    then
+                        newPASSWORD=$(whiptail --title "Add $table_TitleName Account" --passwordbox "New PASSWORD:" 10 60 3>&1 1>&2 2>&3)
+                        exitstatus=$?
+                    fi
+                fi
+                #用户取消
+                if [ $exitstatus = 1 ]
+                then
+                    return
+                fi
+                #弹出确认框
+                if [ $exitstatus = 0 ] && (whiptail --title "Confirm Box" --yesno "Add $table_TitleName Account\n$ID_name: $newID\n$NAME_name: $newNAME\n?" 10 60)
+                then
+                    sql="use HWMS; insert into $table_BIGNAME values ('$newID','$newPASSWORD','$newNAME');"
+                    mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null
+                    exitstatus=$?
+                    if [ $exitstatus = 0 ]
+                    then
+                        whiptail --title "Success" --msgbox "Add $table_smallname account successfully!" 10 60
+                    else
+                        whiptail --title "Failed" --msgbox "Something went wrong on the database!" 10 60
+                    fi
+                fi
+                ;;
+            3) #编辑账户
+                #读取编辑用户的ID、NAME、PASSWORD
+                editID=$(whiptail --title "Edit $table_TitleName Account" --inputbox "Enter $ID_name:" 10 60 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                #用户选择cancel，直接返回二级目录
+                if [ $exitstatus = 1 ]
+                then
+                    return
+                fi
+                #确认是否存在这样的用户
+                sql="use HWMS; select $ID_name from $table_BIGNAME where $ID_name='$editID';"
+                tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | grep "$editID" | wc -w`
+                sql="use HWMS; select $NAME_name from $table_BIGNAME where $ID_name='$editID';"
+                editNAME=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | sed -n '2p'` #编辑用户的姓名
+                if [ $tmp = 0 ]
+                then
+                    whiptail --title "Failed" --msgbox "No such $table_smallname with $ID_name '$editID'!" 10 60
+                    return
+                fi
+                #否则存在这个用户
+                newNAME=$(whiptail --title "Edit $table_TitleName Account" --inputbox "Edit $NAME_name:" 10 60 $editNAME 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                if [ $exitstatus = 0 ]
+                then
+                    newPASSWORD=$(whiptail --title "Edit $table_TitleName Account" --passwordbox "New PASSWORD:" 10 60 3>&1 1>&2 2>&3)
+                    exitstatus=$?
+                else
+                    return
+                fi
+                #输入完毕，如果都输入成功则弹出确认框
+                if [ $exitstatus = 0 ] && (whiptail --title "Confirm Box" --yesno "Edit $table_TitleName Account\n$ID_name: $editID\n$NAME_name: $editNAME -> $newNAME\nPASSWORD: (Not shown)\n?" 10 60)
+                then
+                    sql="use HWMS; update $table_BIGNAME set $NAME_name='$newNAME', PASSWORD='$newPASSWORD' where $ID_name='$editID';"
+                    mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null
+                    exitstatus=$?
+                    if [ $exitstatus = 0 ]
+                    then
+                        whiptail --title "Success" --msgbox "Edit $table_smallname account successfully!" 10 60
+                    else
+                        whiptail --title "Failed" --msgbox "Something went wrong on the database!" 10 60
+                    fi
+                fi
+                ;;
+            4) #删除账户
+                #读取删除账户的ID
+                deleteID=$(whiptail --title "Delete $table_TitleName Account" --inputbox "Delete $ID_name:" 10 60 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                if [ $exitstatus = 1 ]
+                then
+                    return; #用户选择cancel
+                fi
+                if [ $2 = 0 ] && [[ $deleteID == "root" ]]
+                then
+                    #不允许删除管理员root账号
+                    whiptail --title "Warning" --msgbox "Administrator root account is not allowed to be deleted!" 10 60
+                    return
+                fi
+                if [ $2 = $userflag ] && [[ $deleteID == $username ]]
+                then
+                    #不允许删除自己账号
+                    whiptail --title "Warning" --msgbox "You cannot delete your own account!" 10 60
+                    return
+                fi
+                #确认是否存在这样的用户
+                sql="use HWMS; select $ID_name from $table_BIGNAME where $ID_name='$deleteID';"
+                tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | grep "$deleteID" | wc -w`
+                sql="use HWMS; select $NAME_name from $table_BIGNAME where $ID_name='$deleteID';"
+                deleteNAME=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | sed -n '2p'` #被删除用户的姓名
+                #不存在
+                if [ $tmp = 0 ]
+                then
+                    whiptail --title "Failed" --msgbox "No such $table_smallname with $ID_name '$deleteID'!" 10 60
+                    return
+                #存在，弹出确认框
+                elif (whiptail --title "Confirm Box" --yesno "Delete $table_TitleName Account\n$ID_name: $deleteID\nTNAME: $deleteNAME\n?" 10 60)
+                then
+                    #删除教师账户，找到与其绑定的所有课程！
+                    if [ $2 = 1 ]
+                    then
+                        #获取与其绑定的所有课程CID
+                        sql="use HWMS; select CID from COURSE where TID='$deleteID';"
+                        allCID=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -s -e"$sql" 2>/dev/null`
+                    fi
+                    sql="use HWMS; delete from $table_BIGNAME where $ID_name='$deleteID';"
+                    mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 1>/dev/null 2>&1
+                    exitstatus=$?
+                    if [ $exitstatus = 1 ]
+                    then
+                        whiptail --title "Failed" --msgbox "Something went wrong on the database!" 10 60
+                    fi
+                    #删除教师账户，删除其绑定的所有课程！其中，SC、COURSE_INFO、HW相关信息已经级联删除
+                    #需要手动删除各个作业完成情况表
+                    if [ $2 = 1 ]
+                    then
+                        sql="use HWMS; show tables;"
+                        tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -s -e"$sql" 2>/dev/null`
+                        for CID in $allCID
+                        do
+                            for HWtable in $tmp
+                            do
+                                if [[ $HWtable == HW_INFO_${CID}_* ]]
+                                then
+                                    sql="use HWMS; drop table $HWtable;" #删除作业完成情况表
+                                    mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null
+                                    exitstatus=$?
+                                    if [ $exitstatus = 1 ]
+                                    then
+                                        whiptail --title "Failed" --msgbox "Something went wrong on the database!" 10 60
+                                        return
+                                    fi
+                                fi
+                            done
+                        done
+                    fi
+                    whiptail --title "Success" --msgbox "Delete $table_smallname account successfully!" 10 60
+                fi
+                ;;
+            *)
+                ;;
+        esac
+}
+
+editPersonalProfile()
+{
+    if [ $1 = 0 ]
+    then
+        table_smallname=admin
+        table_BIGNAME=ADMIN
+        table_TitleName=Administrator
+        first_letter=A
+        ID_name=AID
+        NAME_name=ANAME
+    elif [ $1 = 1 ]
+    then
+        table_smallname=teacher
+        table_BIGNAME=TEACHER
+        table_TitleName=Teacher
+        first_letter=T
+        ID_name=TID
+        NAME_name=TNAME
+    elif [ $1 = 2 ]
+    then
+        table_smallname=student
+        table_BIGNAME=STUDENT
+        table_TitleName=Student
+        first_letter=S
+        ID_name=SID
+        NAME_name=SNAME
+    fi
+
+    editID=$username
+    #查找自己的用户信息
+    sql="use HWMS; select $NAME_name from $table_BIGNAME where $ID_name='$editID';"
+    editNAME=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | sed -n '2p'` #自己的姓名
+    sql="use HWMS; select PASSWORD from $table_BIGNAME where $ID_name='$editID';"
+    editPASSWORD=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | sed -n '2p'` #自己的密码
+    newNAME=$(whiptail --title "Personal Profile" --inputbox "$NAME_name:" 10 60 $editNAME 3>&1 1>&2 2>&3)
+    exitstatus=$?
+    if [ $exitstatus = 0 ]
+    then
+        newPASSWORD=$(whiptail --title "Personal Profile" --passwordbox "PASSWORD:" 10 60 $editPASSWORD 3>&1 1>&2 2>&3)
+        exitstatus=$?
+    else
+        return
+    fi
+    #输入完毕，如果都输入成功则弹出确认框
+    if [ $exitstatus = 0 ] && (whiptail --title "Confirm Box" --yesno "Edit Personal Profile\n$ID_name: $editID\nTNAME: $editNAME -> $newNAME\nPASSWORD: (Not shown)\n?" 10 60)
+    then
+        sql="use HWMS; update $table_BIGNAME set $NAME_name='$newNAME', PASSWORD='$newPASSWORD' where $ID_name='$editID';"
+        mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null
+        exitstatus=$?
+        if [ $exitstatus = 0 ]
+        then
+            whiptail --title "Success" --msgbox "Edit personal profile successfully!" 10 60
+        else
+            whiptail --title "Failed" --msgbox "Something went wrong on the database!" 10 60
+        fi
+    fi
+}
+
+adminCourseOptionJudge()
+{
+    case "$1" in
+            1) #查看所有课程（在命令行界面）
+                sql="use HWMS; select TID, CID, CNAME from COURSE;"
+                echo "--------------------All Courses--------------------"
+                mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null
+                echo "-------------Press any key to continue-------------"
+                read -n1 -s
+                ;;
+            2) #新建课程
+                #读取新建用户的ID、NAME、PASSWORD
+                newCID=$(whiptail --title "Add New Course" --inputbox "New CID:" 10 60 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                if [ $exitstatus = 0 ]
+                then
+                    #确认是否存在相同的CID
+                    sql="use HWMS; select CID from COURSE where CID='$newCID';"
+                    tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | grep "$newCID" | wc -w`
+                    #存在，返回
+                    if (( $tmp > 0 ))
+                    then
+                        whiptail --title "Failed" --msgbox "Course with CID '$newCID' already exists!" 10 60
+                        return
+                    fi
+                    newCNAME=$(whiptail --title "Add New Course" --inputbox "New CNAME:" 10 60 3>&1 1>&2 2>&3)
+                    exitstatus=$?
+                    if [ $exitstatus = 0 ]
+                    then
+                        newTID=$(whiptail --title "Add New Course" --inputbox "New TID:" 10 60 3>&1 1>&2 2>&3)
+                        exitstatus=$?
+                    fi
+                fi
+                #用户取消
+                if [ $exitstatus = 1 ]
+                then
+                    return
+                fi
+                #确认教师ID是否存在
+                sql="use HWMS; select TID from TEACHER where TID='$newTID';"
+                tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | grep "$newTID" | wc -w`
+                #不存在
+                if [ $tmp = 0 ]
+                then
+                    whiptail --title "Failed" --msgbox "No such teacher with TID '$newTID'!" 10 60
+                    return
+                fi
+                #弹出确认框
+                if (whiptail --title "Confirm Box" --yesno "Add course:\nCID: $newCID\nCNAME: $newCNAME\nTID: $newTID\n?" 10 60)
+                then
+                    sql="use HWMS; insert into COURSE values ('$newCID','$newCNAME','$newTID');"
+                    mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null
+                    exitstatus=$?
+                    if [ $exitstatus = 0 ]
+                    then
+                        whiptail --title "Success" --msgbox "Add course successfully!" 10 60
+                    else
+                        whiptail --title "Failed" --msgbox "Something went wrong on the database!" 10 60
+                    fi
+                fi
+                ;;
+            3) #编辑课程
+                #读取编辑课程的CID、CNAME、TID
+                editCID=$(whiptail --title "Edit Course" --inputbox "Enter CID:" 10 60 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                #用户选择cancel，直接返回二级目录
+                if [ $exitstatus = 1 ]
+                then
+                    return
+                fi
+                #确认是否存在这样的课程
+                sql="use HWMS; select CID from COURSE where CID='$editCID';"
+                tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | grep "$editID" | wc -w`
+                sql="use HWMS; select CNAME from COURSE where CID='$editCID';"
+                editCNAME=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | sed -n '2p'` #编辑课程名
+                sql="use HWMS; select TID from COURSE where CID='$editCID';"
+                editTID=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | sed -n '2p'` #编辑课程的教师ID
+                if [ $tmp = 0 ]
+                then
+                    whiptail --title "Failed" --msgbox "No such course with CID '$editCID'!" 10 60
+                    return
+                fi
+                #存在这个课程
+                newCNAME=$(whiptail --title "Edit Course" --inputbox "Edit CNAME:" 10 60 $editCNAME 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                if [ $exitstatus = 0 ]
+                then
+                    newTID=$(whiptail --title "Edit Course" --inputbox "New TID:" 10 60 $editTID 3>&1 1>&2 2>&3)
+                    exitstatus=$?
+                    #确认教师ID是否存在
+                    sql="use HWMS; select TID from TEACHER where TID='$newTID';"
+                    tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | grep "$newTID" | wc -w`
+                    #不存在
+                    if [ $tmp = 0 ]
+                    then
+                        whiptail --title "Failed" --msgbox "No such teacher with TID '$newTID'!" 10 60
+                        return
+                    fi
+                else
+                    return
+                fi
+                #输入完毕，如果都输入成功则弹出确认框
+                if [ $exitstatus = 0 ] && (whiptail --title "Confirm Box" --yesno "Edit Course\nCID: $editCID\nCNAME: $editCNAME -> $newCNAME\nTID: $editTID -> $newTID\n?" 10 60)
+                then
+                    sql="use HWMS; update COURSE set CNAME='$newCNAME', TID='$newTID' where CID='$editCID';"
+                    mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null
+                    exitstatus=$?
+                    if [ $exitstatus = 0 ]
+                    then
+                        whiptail --title "Success" --msgbox "Edit course successfully!" 10 60
+                    else
+                        whiptail --title "Failed" --msgbox "Something went wrong on the database!" 10 60
+                    fi
+                fi
+                ;;
+            4) #删除课程
+                #读取删除课程的ID
+                deleteCID=$(whiptail --title "Delete Course" --inputbox "Delete CID:" 10 60 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                if [ $exitstatus = 1 ]
+                then
+                    return; #用户选择cancel
+                fi
+                #确认是否存在这样的课程
+                sql="use HWMS; select CID from COURSE where CID='$deleteCID';"
+                tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | grep "$deleteCID" | wc -w`
+                sql="use HWMS; select CNAME from COURSE where CID='$deleteCID';"
+                deleteCNAME=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | sed -n '2p'` #被删除的课程名
+                sql="use HWMS; select TID from COURSE where CID='$deleteCID';"
+                deleteTID=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | sed -n '2p'` #被删除的课程的教师ID
+                #不存在
+                if [ $tmp = 0 ]
+                then
+                    whiptail --title "Failed" --msgbox "No such course with CID '$deleteCID'!" 10 60
+                    return
+                #存在，弹出确认框
+                elif (whiptail --title "Confirm Box" --yesno "Delete Course\nCID: $deleteCID\nCNAME: $deleteCNAME\nTID: $deleteTID\n?" 10 60)
+                then
+                    sql="use HWMS; delete from COURSE where CID='$deleteCID';"
+                    mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 1>/dev/null 2>&1
+                    exitstatus=$?
+                    if [ $exitstatus = 1 ]
+                    then
+                        whiptail --title "Failed" --msgbox "Something went wrong on the database!" 10 60
+                    fi
+                    #删除课程，还需要删除该课程的所有作业、所有课程信息（级联），删除所有作业完成情况表
+                    sql="use HWMS; show tables;"
+                    tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -s -e"$sql" 2>/dev/null`
+                    for HWtable in $tmp
+                    do
+                        if [[ $HWtable == HW_INFO_${deleteCID}_* ]]
+                        then
+                            sql="use HWMS; drop table $HWtable;" #删除作业完成情况表
+                            mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null
+                            exitstatus=$?
+                            if [ $exitstatus = 1 ]
+                            then
+                                whiptail --title "Failed" --msgbox "Something went wrong on the database!" 10 60
+                                return
+                            fi
+                        fi
+                    done
+                    whiptail --title "Success" --msgbox "Delete course successfully!" 10 60
+                fi
+                ;;
+            *)
+                ;;
+    esac
+}
+
+teacherCourseOptionJudge()
+{
+    case "$1" in
+            1) #查看个人的所有课程（在命令行界面）
+                sql="use HWMS; select CID, CNAME from COURSE where TID='$username';"
+                echo "--------------------All Courses--------------------"
+                mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null
+                echo "-------------Press any key to continue-------------"
+                read -n1 -s
+                ;;
+            2) #绑定学生账户界面
+                cmd="teacher_course_student_account"
+                ;;
+            3) #课程信息
+                cmd="teacher_course_course_info"
+                ;;
+            4) #作业或实验
+                cmd="teacher_course_hw"
+                ;;
+            *)
+                ;;
+    esac
+}
+
+teacherCourseBindStudentAccount()
+{
+    case "$1" in
+            1) #查看课程的学生名单
+                #获取CID
+                CID=$(whiptail --title "List Student Account Bound to Course" --inputbox "Enter course CID:" 10 60 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                #用户取消
+                if [ $exitstatus = 1 ]
+                then
+                    return
+                fi
+                #检查该教师是否开了该课程
+                sql="use HWMS; select CID from COURSE where CID='$CID' and TID='$username';"
+                tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | grep "$CID" | wc -w`
+                #不存在
+                if [ $tmp = 0 ]
+                then
+                    whiptail --title "Failed" --msgbox "You don't have such course with CID '$CID'!" 10 60
+                    return
+                fi
+                sql="use HWMS; select SID from SC where CID='$CID';"
+                echo "--------------------All Student Accounts in Course with CID '$CID'--------------------"
+                mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null
+                echo "-------------Press any key to continue-------------"
+                read -n1 -s
+                ;;
+            2) #绑定新学生账户
+                #获取CID
+                CID=$(whiptail --title "Bind New Student Account to Course" --inputbox "Enter course CID:" 10 60 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                #用户取消
+                if [ $exitstatus = 1 ]
+                then
+                    return
+                fi
+                #检查该教师是否开了该课程
+                sql="use HWMS; select CID from COURSE where CID='$CID' and TID='$username';"
+                tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | grep "$CID" | wc -w`
+                #不存在
+                if [ $tmp = 0 ]
+                then
+                    whiptail --title "Failed" --msgbox "You don't have such course with CID '$CID'!" 10 60
+                    return
+                fi
+                #获取SID
+                SID=$(whiptail --title "Bind New Student Account to Course" --inputbox "Enter student SID:" 10 60 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                #用户取消
+                if [ $exitstatus = 1 ]
+                then
+                    return
+                fi
+                #检查该账户是否有效
+                sql="use HWMS; select SID from STUDENT where SID='$SID';"
+                tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | grep "$SID" | wc -w`
+                #不存在
+                if [ $tmp = 0 ]
+                then
+                    whiptail --title "Failed" --msgbox "No such student with SID '$SID'!" 10 60
+                    return
+                fi
+                #检查是否已经添加过该学生了
+                sql="use HWMS; select SID from SC where SID='$SID' and CID='$CID';"
+                tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | grep "$SID" | wc -w`
+                #不存在
+                if (( $tmp > 0 ))
+                then
+                    whiptail --title "Failed" --msgbox "Student '$SID' already in course with CID '$CID'!" 10 60
+                    return
+                fi
+                #弹出确认框
+                if (whiptail --title "Confirm Box" --yesno "Bind student SID: '$SID' -> CID: '$CID'?" 10 60)
+                then
+                    sql="use HWMS; insert into SC values ('$SID','$CID');"
+                    mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null
+                    exitstatus=$?
+                    if [ $exitstatus = 1 ]
+                    then
+                        whiptail --title "Failed" --msgbox "Something went wrong on the database!" 10 60
+                    fi
+                    #插入该学生的作业完成情况
+                    sql="use HWMS; show tables;"
+                    tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -s -e"$sql" 2>/dev/null`
+                    for HWtable in $tmp
+                    do
+                        if [[ $HWtable == HW_INFO_${CID}_* ]]
+                        then
+                            HWID=`echo $HWtable | rev | cut -d _ -f 1 | rev` #得到HWID
+                            sql="use HWMS; insert into $HWtable values ('$SID',false,NULL,NULL);" #添加该学生信息
+                            mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null
+                            exitstatus=$?
+                            if [ $exitstatus = 1 ]
+                            then
+                                whiptail --title "Failed" --msgbox "Something went wrong on the database!" 10 60
+                                return
+                            fi
+                        fi
+                    done
+                    whiptail --title "Success" --msgbox "Bind new student account to course successfully!" 10 60
+                fi
+                ;;
+            3) #从课程中删除学生
+                #获取CID
+                CID=$(whiptail --title "Remove Student Account from Course" --inputbox "Enter course CID:" 10 60 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                #用户取消
+                if [ $exitstatus = 1 ]
+                then
+                    return
+                fi
+                #检查该教师是否开了该课程
+                sql="use HWMS; select CID from COURSE where CID='$CID' and TID='$username';"
+                tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | grep "$CID" | wc -w`
+                #不存在
+                if [ $tmp = 0 ]
+                then
+                    whiptail --title "Failed" --msgbox "You don't have such course with CID '$CID'!" 10 60
+                    return
+                fi
+                #获取SID
+                SID=$(whiptail --title "Remove Student Account from Course" --inputbox "Enter student SID:" 10 60 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                #用户取消
+                if [ $exitstatus = 1 ]
+                then
+                    return
+                fi
+                #检查该账户是否有效
+                sql="use HWMS; select SID from STUDENT where SID='$SID';"
+                tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | grep "$SID" | wc -w`
+                #不存在
+                if [ $tmp = 0 ]
+                then
+                    whiptail --title "Failed" --msgbox "No such student with SID '$SID'!" 10 60
+                    return
+                fi
+                #检查该学生是否已经被添加到该课程
+                sql="use HWMS; select SID from SC where SID='$SID' and CID='$CID';"
+                tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | grep "$SID" | wc -w`
+                #不存在
+                if [ $tmp = 0 ]
+                then
+                    whiptail --title "Failed" --msgbox "Student '$SID' is not in course with CID '$CID'!" 10 60
+                    return
+                fi
+                #弹出确认框
+                if (whiptail --title "Confirm Box" --yesno "Remove student SID: '$SID' from CID: '$CID'?" 10 60)
+                then
+                    sql="use HWMS; delete from SC where SID='$SID' and CID='$CID';"
+                    mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null
+                    exitstatus=$?
+                    if [ $exitstatus = 1 ]
+                    then
+                        whiptail --title "Failed" --msgbox "Something went wrong on the database!" 10 60
+                    fi
+                    #学生被从课程中删除，需要手动删除其在所有作业完成情况表的信息
+                    sql="use HWMS; show tables;"
+                    tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -s -e"$sql" 2>/dev/null`
+                    for HWtable in $tmp
+                    do
+                        if [[ $HWtable == HW_INFO_${CID}_* ]]
+                        then
+                            HWID=`echo $HWtable | rev | cut -d _ -f 1 | rev` #得到HWID
+                            sql="use HWMS; delete from $HWtable where SID='$SID';" #删除该学生信息
+                            mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null
+                            exitstatus=$?
+                            if [ $exitstatus = 1 ]
+                            then
+                                whiptail --title "Failed" --msgbox "Something went wrong on the database!" 10 60
+                                return
+                            fi
+                        fi
+                    done
+                    whiptail --title "Success" --msgbox "Remove student account from course successfully!" 10 60
+                fi
+                ;;
+            *)
+                ;;
+    esac
+}
+
+teacherCourseCourseInfo()
+{
+    case "$1" in
+            1) #List
+                #获取CID
+                CID=$(whiptail --title "List Course Info" --inputbox "Enter course CID:" 10 60 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                #用户取消
+                if [ $exitstatus = 1 ]
+                then
+                    return
+                fi
+                #检查该教师是否开了该课程
+                sql="use HWMS; select CID from COURSE where CID='$CID' and TID='$username';"
+                tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | grep "$CID" | wc -w`
+                #不存在
+                if [ $tmp = 0 ]
+                then
+                    whiptail --title "Failed" --msgbox "You don't have such course with CID '$CID'!" 10 60
+                    return
+                fi
+                #查询该课程的所有信息
+                sql="use HWMS; select IID, TXT as INFO from COURSE_INFO where CID='$CID';"
+                echo "--------------------All Info of Course with CID '$CID'--------------------"
+                mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null
+                echo "-------------Press any key to continue-------------"
+                read -n1 -s
+                ;;
+            2) #Add
+                #获取CID
+                CID=$(whiptail --title "Add Course Info" --inputbox "Enter course CID:" 10 60 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                #用户取消
+                if [ $exitstatus = 1 ]
+                then
+                    return
+                fi
+                #检查该教师是否开了该课程
+                sql="use HWMS; select CID from COURSE where CID='$CID' and TID='$username';"
+                tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | grep "$CID" | wc -w`
+                #不存在
+                if [ $tmp = 0 ]
+                then
+                    whiptail --title "Failed" --msgbox "You don't have such course with CID '$CID'!" 10 60
+                    return
+                fi
+                #获取TXT
+                TXT=$(whiptail --title "Add Course Info" --inputbox "Enter course info:" 10 60 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                #用户取消
+                if [ $exitstatus = 1 ]
+                then
+                    return
+                fi
+                #统计该课程的信息总数
+                sql="use HWMS; select count(IID) from COURSE_INFO where CID='$CID';"
+                tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -s -e"$sql" 2>/dev/null`
+                let IID=tmp+1 #新课程信息的IID
+                #弹出确认框
+                if (whiptail --title "Confirm Box" --yesno "Add course info for course with CID '$CID'\n$TXT\n?" 10 60)
+                then
+                    sql="use HWMS; insert into COURSE_INFO values ('$CID','$IID','$TXT');"
+                    mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null
+                    exitstatus=$?
+                    if [ $exitstatus = 0 ]
+                    then
+                        whiptail --title "Success" --msgbox "Add course info successfully!" 10 60
+                    else
+                        whiptail --title "Failed" --msgbox "Something went wrong on the database!" 10 60
+                    fi
+                fi
+                ;;
+            3) #Edit
+                #获取CID
+                CID=$(whiptail --title "Edit Course Info" --inputbox "Enter course CID:" 10 60 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                #用户取消
+                if [ $exitstatus = 1 ]
+                then
+                    return
+                fi
+                #检查该教师是否开了该课程
+                sql="use HWMS; select CID from COURSE where CID='$CID' and TID='$username';"
+                tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | grep "$CID" | wc -w`
+                #不存在
+                if [ $tmp = 0 ]
+                then
+                    whiptail --title "Failed" --msgbox "You don't have such course with CID '$CID'!" 10 60
+                    return
+                fi
+                #获取IID
+                IID=$(whiptail --title "Edit Course Info" --inputbox "Enter course info IID:" 10 60 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                #用户取消
+                if [ $exitstatus = 1 ]
+                then
+                    return
+                fi
+                #检查是否存在该课程信息
+                sql="use HWMS; select IID from COURSE_INFO where CID='$CID' and IID='$IID';"
+                tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | grep "$IID" | wc -w`
+                #不存在
+                if [ $tmp = 0 ]
+                then
+                    whiptail --title "Failed" --msgbox "No such course info with IID '$IID' in course with CID '$CID'!" 10 60
+                    return
+                fi
+                #获取内容
+                sql="use HWMS; select TXT from COURSE_INFO where CID='$CID' and IID='$IID';"
+                TXT=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -s -e"$sql" 2>/dev/null`
+                newTXT=$(whiptail --title "Edit Course Info" --inputbox "Edit course info:" 10 60 $TXT 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                #用户取消
+                if [ $exitstatus = 1 ]
+                then
+                    return
+                fi
+                #弹出确认框
+                if (whiptail --title "Confirm Box" --yesno "Edit course info with IID '$IID' for course with CID '$CID'\n$TXT\n↓\n$newTXT\n?" 10 60)
+                then
+                    sql="use HWMS; update COURSE_INFO set TXT='$newTXT' where IID='$IID' and CID='$CID'"
+                    mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null
+                    exitstatus=$?
+                    if [ $exitstatus = 0 ]
+                    then
+                        whiptail --title "Success" --msgbox "Edit course info successfully!" 10 60
+                    else
+                        whiptail --title "Failed" --msgbox "Something went wrong on the database!" 10 60
+                    fi
+                fi
+                ;;
+            4) #Delete
+                #获取CID
+                CID=$(whiptail --title "Delete Course Info" --inputbox "Enter course CID:" 10 60 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                #用户取消
+                if [ $exitstatus = 1 ]
+                then
+                    return
+                fi
+                #检查该教师是否开了该课程
+                sql="use HWMS; select CID from COURSE where CID='$CID' and TID='$username';"
+                tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | grep "$CID" | wc -w`
+                #不存在
+                if [ $tmp = 0 ]
+                then
+                    whiptail --title "Failed" --msgbox "You don't have such course with CID '$CID'!" 10 60
+                    return
+                fi
+                #获取IID
+                IID=$(whiptail --title "Delete Course Info" --inputbox "Enter course info IID:" 10 60 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                #用户取消
+                if [ $exitstatus = 1 ]
+                then
+                    return
+                fi
+                #检查是否存在该课程信息
+                sql="use HWMS; select IID from COURSE_INFO where CID='$CID' and IID='$IID';"
+                tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | grep "$IID" | wc -w`
+                #不存在
+                if [ $tmp = 0 ]
+                then
+                    whiptail --title "Failed" --msgbox "No such course info with IID '$IID' in course with CID '$CID'!" 10 60
+                    return
+                fi
+                #获取内容
+                sql="use HWMS; select TXT from COURSE_INFO where CID='$CID' and IID='$IID';"
+                TXT=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -s -e"$sql" 2>/dev/null`
+                #弹出确认框
+                if (whiptail --title "Confirm Box" --yesno "Delete course info with IID '$IID' from course with CID '$CID'\n$TXT\n?" 10 60)
+                then
+                    #删除COURSE_INFO表中的记录，并将大于$IID的所有信息的IID减一
+                    sql="use HWMS; delete from COURSE_INFO where IID='$IID' and CID='$CID'; \
+                    update COURSE_INFO set IID=IID-1 where IID>$IID and CID='$CID';"
+                    mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null
+                    exitstatus=$?
+                    if [ $exitstatus = 0 ]
+                    then
+                        whiptail --title "Success" --msgbox "Delete course info successfully!" 10 60
+                    else
+                        whiptail --title "Failed" --msgbox "Something went wrong on the database!" 10 60
+                    fi
+                fi
+                ;;
+            *)
+                ;;
+    esac
+}
+
+teacherCourseHW()
+{
+    case "$1" in
+            1) #List 查看指定课程的所有作业
+                #获取CID
+                CID=$(whiptail --title "List Homework" --inputbox "Enter course CID:" 10 60 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                #用户取消
+                if [ $exitstatus = 1 ]
+                then
+                    return
+                fi
+                #检查该教师是否开了该课程
+                sql="use HWMS; select CID from COURSE where CID='$CID' and TID='$username';"
+                tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | grep "$CID" | wc -w`
+                #不存在
+                if [ $tmp = 0 ]
+                then
+                    whiptail --title "Failed" --msgbox "You don't have such course with CID '$CID'!" 10 60
+                    return
+                fi
+                #查询该课程的所有信息
+                sql="use HWMS; select HWID, TXT as INFO from HW where CID='$CID';"
+                echo "--------------------All Homework of Course with CID '$CID'--------------------"
+                mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null
+                echo "-------------Press any key to continue-------------"
+                read -n1 -s
+                ;;
+            2) #Add
+                #获取CID
+                CID=$(whiptail --title "Add Homework" --inputbox "Enter course CID:" 10 60 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                #用户取消
+                if [ $exitstatus = 1 ]
+                then
+                    return
+                fi
+                #检查该教师是否开了该课程
+                sql="use HWMS; select CID from COURSE where CID='$CID' and TID='$username';"
+                tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | grep "$CID" | wc -w`
+                #不存在
+                if [ $tmp = 0 ]
+                then
+                    whiptail --title "Failed" --msgbox "You don't have such course with CID '$CID'!" 10 60
+                    return
+                fi
+                #获取TXT
+                TXT=$(whiptail --title "Add Homework" --inputbox "Enter homework info:" 10 60 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                #用户取消
+                if [ $exitstatus = 1 ]
+                then
+                    return
+                fi
+                #统计该课程的信息总数
+                sql="use HWMS; select count(HWID) from HW where CID='$CID';"
+                tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -s -e"$sql" 2>/dev/null`
+                let HWID=tmp+1 #新作业的HWID
+                #弹出确认框
+                if (whiptail --title "Confirm Box" --yesno "Add homework for course with CID '$CID'\n$TXT\n?" 10 60)
+                then
+                    sql="use HWMS; insert into HW values ('$CID','$HWID','$TXT');"
+                    mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 1>/dev/null 2>&1
+                    exitstatus=$?
+                    if [ $exitstatus = 1 ]
+                    then
+                        whiptail --title "Failed" --msgbox "Something went wrong on the database1!" 10 60
+                        return
+                    fi
+                    #建作业完成情况表
+                    sql="use HWMS; \
+                    create table HW_INFO_${CID}_${HWID}( \
+                        SID char(30) primary key, \
+                        DONE boolean, \
+                        TXT char(255), \
+                        SCORE int); \
+                    alter table HW_INFO_${CID}_${HWID} add constraint HW_INFO_${CID}_${HWID}_REF foreign key(SID) references STUDENT(SID) on delete cascade on update cascade;"
+                    mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 1>/dev/null 2>&1
+                    exitstatus=$?
+                    if [ $exitstatus = 1 ]
+                    then
+                        whiptail --title "Failed" --msgbox "Something went wrong on the database2!" 10 60
+                        return
+                    fi
+                    #将所有选了该课的学生添加到作业完成情况表
+                    sql="use HWMS; select SID from SC where CID='$CID'"
+                    tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -s -e"$sql" 2>/dev/null`
+                    for SID in $tmp
+                    do
+                        sql="use HWMS; insert into HW_INFO_${CID}_${HWID} values ('$SID',false,NULL,NULL);"
+                        mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 1>/dev/null 2>&1
+                    done
+                    
+                    
+                    whiptail --title "Success" --msgbox "Add homework successfully!" 10 60
+                fi
+                ;;
+            3) #Edit
+                #获取CID
+                CID=$(whiptail --title "Edit Homework" --inputbox "Enter course CID:" 10 60 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                #用户取消
+                if [ $exitstatus = 1 ]
+                then
+                    return
+                fi
+                #检查该教师是否开了该课程
+                sql="use HWMS; select CID from COURSE where CID='$CID' and TID='$username';"
+                tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | grep "$CID" | wc -w`
+                #不存在
+                if [ $tmp = 0 ]
+                then
+                    whiptail --title "Failed" --msgbox "You don't have such course with CID '$CID'!" 10 60
+                    return
+                fi
+                #获取HWID
+                HWID=$(whiptail --title "Edit Homework" --inputbox "Enter homework HWID:" 10 60 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                #用户取消
+                if [ $exitstatus = 1 ]
+                then
+                    return
+                fi
+                #检查是否存在该作业
+                sql="use HWMS; select HWID from HW where CID='$CID' and HWID='$HWID';"
+                tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | grep "$HWID" | wc -w`
+                #不存在
+                if [ $tmp = 0 ]
+                then
+                    whiptail --title "Failed" --msgbox "No such homework with HWID '$HWID' in course with CID '$CID'!" 10 60
+                    return
+                fi
+                #获取内容
+                sql="use HWMS; select TXT from HW where CID='$CID' and HWID='$HWID';"
+                TXT=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -s -e"$sql" 2>/dev/null`
+                newTXT=$(whiptail --title "Edit Homework" --inputbox "Edit homework:" 10 60 $TXT 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                #用户取消
+                if [ $exitstatus = 1 ]
+                then
+                    return
+                fi
+                #弹出确认框
+                if (whiptail --title "Confirm Box" --yesno "Edit homework with HWID '$HWID' for course with CID '$CID'\n$TXT\n↓\n$newTXT\n?" 10 60)
+                then
+                    sql="use HWMS; update HW set TXT='$newTXT' where HWID='$HWID' and CID='$CID'"
+                    mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null
+                    exitstatus=$?
+                    if [ $exitstatus = 0 ]
+                    then
+                        whiptail --title "Success" --msgbox "Edit homework successfully!" 10 60
+                    else
+                        whiptail --title "Failed" --msgbox "Something went wrong on the database!" 10 60
+                    fi
+                fi
+                ;;
+            4) #Delete
+                #获取CID
+                CID=$(whiptail --title "Delete Homework" --inputbox "Enter course CID:" 10 60 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                #用户取消
+                if [ $exitstatus = 1 ]
+                then
+                    return
+                fi
+                #检查该教师是否开了该课程
+                sql="use HWMS; select CID from COURSE where CID='$CID' and TID='$username';"
+                tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | grep "$CID" | wc -w`
+                #不存在
+                if [ $tmp = 0 ]
+                then
+                    whiptail --title "Failed" --msgbox "You don't have such course with CID '$CID'!" 10 60
+                    return
+                fi
+                #获取HWID
+                HWID=$(whiptail --title "Delete Homework" --inputbox "Enter homework HWID:" 10 60 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                #用户取消
+                if [ $exitstatus = 1 ]
+                then
+                    return
+                fi
+                #检查是否存在该课程信息
+                sql="use HWMS; select HWID from HW where CID='$CID' and HWID='$HWID';"
+                tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | grep "$IID" | wc -w`
+                #不存在
+                if [ $tmp = 0 ]
+                then
+                    whiptail --title "Failed" --msgbox "No such homework with HWID '$HWID' in course with CID '$CID'!" 10 60
+                    return
+                fi
+                #获取内容
+                sql="use HWMS; select TXT from HW where CID='$CID' and HWID='$HWID';"
+                TXT=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -s -e"$sql" 2>/dev/null`
+                #弹出确认框
+                if (whiptail --title "Confirm Box" --yesno "Delete homework with HWID '$HWID' from course with CID '$CID'\n$TXT\n?" 10 60)
+                then
+                    #删除HW中的记录，并将大于$HWID的所有作业的HWID减一，删除作业完成情况表
+                    sql="use HWMS; delete from HW where HWID='$HWID' and CID='$CID'; \
+                         update HW set HWID=HWID-1 where HWID>$HWID and CID='$CID'; \
+                         drop table HW_INFO_${CID}_${HWID};"
+                    mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null
+                    exitstatus=$?
+                    if [ $exitstatus = 1 ]
+                    then
+                        whiptail --title "Failed" --msgbox "Something went wrong on the database!" 10 60
+                        return
+                    fi
+                    #并将大于$HWID的所有作业的完成情况表根据更新后的HWID重命名（constraint也要重命名）
+                    sql="use HWMS; show tables;"
+                    tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -s -e"$sql" 2>/dev/null`
+                    for HWtable in $tmp
+                    do
+                        if [[ $HWtable == HW_INFO_${CID}_* ]]
+                        then
+                            HWID2bChanged=`echo $HWtable | rev | cut -d _ -f 1 | rev` #得到需要改变的HWID
+                            if (( $HWID2bChanged > $HWID ))
+                            then
+                                #如果大于被删除的HWID，就需要重命名表名+constraint名！
+                                let newHWID=HWID2bChanged-1 #减一
+                                sql="use HWMS; alter table $HWtable rename to HW_INFO_${CID}_${newHWID}; \
+                                     alter table HW_INFO_${CID}_${newHWID} drop constraint HW_INFO_${CID}_${HWID2bChanged}_REF; \
+                                     alter table HW_INFO_${CID}_${newHWID} add constraint HW_INFO_${CID}_${newHWID}_REF foreign key(SID) references STUDENT(SID) on delete cascade on update cascade;"
+                                mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null
+                                exitstatus=$?
+                                if [ $exitstatus = 1 ]
+                                then
+                                    whiptail --title "Failed" --msgbox "Something went wrong on the database!" 10 60
+                                    return
+                                fi
+                            fi
+                        fi
+                    done
+                    whiptail --title "Success" --msgbox "Delete homework successfully!" 10 60
+                fi
+                ;;
+            5) #Check 检查完成作业情况
+                #获取CID
+                CID=$(whiptail --title "Check Completion Table" --inputbox "Enter course CID:" 10 60 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                #用户取消
+                if [ $exitstatus = 1 ]
+                then
+                    return
+                fi
+                #检查该教师是否开了该课程
+                sql="use HWMS; select CID from COURSE where CID='$CID' and TID='$username';"
+                tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | grep "$CID" | wc -w`
+                #不存在
+                if [ $tmp = 0 ]
+                then
+                    whiptail --title "Failed" --msgbox "You don't have such course with CID '$CID'!" 10 60
+                    return
+                fi
+                #获取HWID
+                HWID=$(whiptail --title "Check Completion Table" --inputbox "Enter homework HWID:" 10 60 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                #用户取消
+                if [ $exitstatus = 1 ]
+                then
+                    return
+                fi
+                #检查是否存在该作业
+                sql="use HWMS; select HWID from HW where CID='$CID' and HWID='$HWID';"
+                tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | grep "$HWID" | wc -w`
+                #不存在
+                if [ $tmp = 0 ]
+                then
+                    whiptail --title "Failed" --msgbox "No such homework with HWID '$HWID' in course with CID '$CID'!" 10 60
+                    return
+                fi
+                #查询该作业的完成情况
+                sql="use HWMS; select SID,DONE,SCORE as INFO from HW_INFO_${CID}_${HWID};"
+                echo "--------------------Completion Table of Homework with HWID '$HWID' of Course with CID '$CID'--------------------"
+                mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null
+                echo "-------------Press any key to continue-------------"
+                read -n1 -s
+                ;;
+            6) #Score 打分
+                #获取CID
+                CID=$(whiptail --title "Score" --inputbox "Enter course CID:" 10 60 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                #用户取消
+                if [ $exitstatus = 1 ]
+                then
+                    return
+                fi
+                #检查该教师是否开了该课程
+                sql="use HWMS; select CID from COURSE where CID='$CID' and TID='$username';"
+                tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | grep "$CID" | wc -w`
+                #不存在
+                if [ $tmp = 0 ]
+                then
+                    whiptail --title "Failed" --msgbox "You don't have such course with CID '$CID'!" 10 60
+                    return
+                fi
+                #获取HWID
+                HWID=$(whiptail --title "Score" --inputbox "Enter homework HWID:" 10 60 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                #用户取消
+                if [ $exitstatus = 1 ]
+                then
+                    return
+                fi
+                #检查是否存在该作业
+                sql="use HWMS; select HWID from HW where CID='$CID' and HWID='$HWID';"
+                tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | grep "$HWID" | wc -w`
+                #不存在
+                if [ $tmp = 0 ]
+                then
+                    whiptail --title "Failed" --msgbox "No such homework with HWID '$HWID' in course with CID '$CID'!" 10 60
+                    return
+                fi
+                #获取SID
+                SID=$(whiptail --title "Score" --inputbox "Enter student SID:" 10 60 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                #用户取消
+                if [ $exitstatus = 1 ]
+                then
+                    return
+                fi
+                #检查该学生是否在这门课程内
+                sql="use HWMS; select SID from HW_INFO_${CID}_${HWID} where SID='$SID';"
+                tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | grep "$SID" | wc -w`
+                #不在
+                if [ $tmp = 0 ]
+                then
+                    whiptail --title "Failed" --msgbox "Student with SID '$SID' not in this course!" 10 60
+                    return
+                fi
+                sql="use HWMS; select DONE from HW_INFO_${CID}_${HWID} where SID='$SID';"
+                DONE=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -s -e"$sql" 2>/dev/null`
+                sql="use HWMS; select TXT from HW_INFO_${CID}_${HWID} where SID='$SID';"
+                TXT=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -s -e"$sql" 2>/dev/null`
+                sql="use HWMS; select SCORE from HW_INFO_${CID}_${HWID} where SID='$SID';"
+                SCORE=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -s -e"$sql" 2>/dev/null`
+                newSCORE=$(whiptail --title "SCORE" --inputbox "Enter score for student\nSID: '$SID'\nDONE: '$DONE'\nContent: '$TXT'" 10 60 $SCORE 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                #用户取消
+                if [ $exitstatus = 1 ]
+                then
+                    return
+                fi
+                #弹出确认框
+                if (whiptail --title "Confirm Box" --yesno "Score for student\nSID: '$SID'\nDONE: '$DONE'\nSCORE: '$SCORE' -> '$newSCORE'\n?" 10 60)
+                then
+                    sql="use HWMS; update HW_INFO_${CID}_${HWID} set SCORE='$newSCORE' where SID='$SID';"
+                    mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null
+                    exitstatus=$?
+                    if [ $exitstatus = 0 ]
+                    then
+                        whiptail --title "Success" --msgbox "Score successfully!" 10 60
+                    else
+                        whiptail --title "Failed" --msgbox "Something went wrong on the database!" 10 60
+                    fi
+                fi
+                ;;
+            *)
+                ;;
+    esac
+}
+
+studentCourseOptionJudge()
+{
+    case "$1" in
+            1) #查看个人的所有课程（在命令行界面）
+                sql="use HWMS; select CID, CNAME from SC natural join COURSE where SID='$username';"
+                echo "--------------------All Courses--------------------"
+                mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null
+                echo "-------------Press any key to continue-------------"
+                read -n1 -s
+                ;;
+            2) #查看所有作业的完成情况
+                #获取与其绑定的所有课程CID
+                sql="use HWMS; select CID from SC where SID='$username';"
+                allCID=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -s -e"$sql" 2>/dev/null`
+                #遍历，找到每个与其相关的作业完成表中的相关信息
+                sql="use HWMS; show tables;"
+                tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -s -e"$sql" 2>/dev/null`
+                for CID in $allCID
+                do
+                    #获取课程名
+                    sql="use HWMS; select CNAME from COURSE where CID='$CID';"
+                    CNAME=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -s -e"$sql" 2>/dev/null`
+                    echo "----------------CID: $CID   CNAME: $CNAME----------------"
+                    for HWtable in $tmp
+                    do
+                        if [[ $HWtable == HW_INFO_${CID}_* ]]
+                        then
+                            HWID=`echo $HWtable | rev | cut -d _ -f 1 | rev` #得到HWID
+                            #得到作业信息
+                            sql="use HWMS; select TXT from HW where CID='$CID' and HWID='$HWID';"
+                            TXT=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -s -e"$sql" 2>/dev/null`
+                            echo -e "HWID: $HWID\nHW Info: $TXT" #显示作业编号及内容
+                            sql="use HWMS; select DONE,TXT,SCORE from $HWtable;" #作业完成情况
+                            mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null
+                            echo
+                            exitstatus=$?
+                            if [ $exitstatus = 1 ]
+                            then
+                                whiptail --title "Failed" --msgbox "Something went wrong on the database!" 10 60
+                                return
+                            fi
+                        fi
+                    done
+                done
+                echo "-------------Press any key to continue-------------"
+                read -n1 -s
+                ;;
+            3) #写作业
+                #获取CID
+                CID=$(whiptail --title "Do Homework" --inputbox "Enter course CID:" 10 60 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                #用户取消
+                if [ $exitstatus = 1 ]
+                then
+                    return
+                fi
+                #检查该学生是否加入了该课程
+                sql="use HWMS; select CID from SC where CID='$CID' and SID='$username';"
+                tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | grep "$CID" | wc -w`
+                #不存在
+                if [ $tmp = 0 ]
+                then
+                    whiptail --title "Failed" --msgbox "You are not in such course with CID '$CID'!" 10 60
+                    return
+                fi
+                #获取HWID
+                HWID=$(whiptail --title "Do Homework" --inputbox "Enter homework HWID:" 10 60 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                #用户取消
+                if [ $exitstatus = 1 ]
+                then
+                    return
+                fi
+                #检查是否存在该作业
+                sql="use HWMS; select HWID from HW where CID='$CID' and HWID='$HWID';"
+                tmp=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null | grep "$HWID" | wc -w`
+                #不存在
+                if [ $tmp = 0 ]
+                then
+                    whiptail --title "Failed" --msgbox "No such homework with HWID '$HWID' in course with CID '$CID'!" 10 60
+                    return
+                fi
+                #获取学生作业内容
+                sql="use HWMS; select TXT from HW_INFO_${CID}_${HWID} where SID='$username';"
+                TXT=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -s -e"$sql" 2>/dev/null`
+                newTXT=$(whiptail --title "Do Homework" --inputbox "Edit your homework:" 10 60 "$TXT" 3>&1 1>&2 2>&3)
+                exitstatus=$?
+                #用户取消
+                if [ $exitstatus = 1 ]
+                then
+                    return
+                fi
+                #DONE状态
+                sql="use HWMS; select DONE from HW_INFO_${CID}_${HWID} where SID='$username';"
+                sqlDONE=`mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -s -e"$sql" 2>/dev/null`
+                if [[ $sqlDONE == 0 ]]
+                then
+                    DONE=false
+                else
+                    DONE=true
+                fi
+                if [[ $newTXT == "" ]] || [[ $newTXT == "NULL" ]]
+                then
+                    newDONE=false
+                else
+                    newDONE=true
+                fi
+                #弹出确认框
+                if (whiptail --title "Confirm Box" --yesno --scrolltext "Update homework with HWID '$HWID' for course with CID '$CID'\nContent:\n$TXT\n↓\n$newTXT\nDONE: $DONE -> $newDONE\n?" 10 60)
+                then
+                    sql="use HWMS; update HW_INFO_${CID}_${HWID} set TXT='$newTXT', DONE=$newDONE where SID='$username';"
+                    mysql -u"${SQLUSERNAME}" -p"$SQLPASSWORD" -e"$sql" 2>/dev/null
+                    exitstatus=$?
+                    if [ $exitstatus = 0 ]
+                    then
+                        whiptail --title "Success" --msgbox "Edit homework successfully!" 10 60
+                    else
+                        whiptail --title "Failed" --msgbox "Something went wrong on the database!" 10 60
+                    fi
+                fi
+                ;;
+            *)
+                ;;
+    esac
+}
+#---------------------------函数声明区结束------------------------------
+
+
+#主循环
+while [[ $cmd != "quit" ]] && [[ $cmd != "exit" ]]
+do
+    #一级目录：显示图形化主界面
+    if [[ $cmd == "" ]]
+    then 
+        if (( userflag == 0 ))
+        then
+            OPTION=$(whiptail --title "Administrator" --menu "Hello, $userrealname. What do you want to do?" 15 60 5 \
+            "1" "Teacher Account" \
+            "2" "Administrator Account" \
+            "3" "Courses" \
+            "4" "Personal Profile" \
+            "5" "Quit" --cancel-button EXIT --ok-button OK 3>&1 1>&2 2>&3)
+            exitstatus=$?
+            case "$OPTION" in
+                1)
+                    cmd="teacher_account" # 已完成
+                    ;;
+                2)
+                    cmd="admin_account" # 已完成
+                    ;;
+                3)
+                    cmd="admin_course" # 已完成
+                    ;;
+                4)
+                    cmd="admin_personal_profile" # 已完成
+                    ;;
+                5)
+                    cmd="quit" # 已完成
+                    ;;
+                *)
+                    ;;
+            esac
+            if [ $exitstatus = 1 ]
+            then
+                cmd="exit"
+            fi
+        elif (( userflag == 1 ))
+        then
+            OPTION=$(whiptail --title "Teacher" --menu "Hello, $userrealname. What do you want to do?" 15 60 4 \
+            "1" "Student Account" \
+            "2" "Courses" \
+            "3" "Personal Profile" \
+            "4" "Quit"  --cancel-button EXIT --ok-button OK  3>&1 1>&2 2>&3)
+            # echo -n "[ADMIN]>>> "
+            case "$OPTION" in
+                1)
+                    cmd="student_account" # 已完成
+                    ;;
+                2)
+                    cmd="teacher_course" # 已完成
+                    ;;
+                3)
+                    cmd="teacher_personal_profile" # 已完成
+                    ;;
+                4)
+                    cmd="quit" # 已完成
+                    ;;
+                *)
+                    ;;
+            esac
+        else
+            OPTION=$(whiptail --title "Student" --menu "Hello, $userrealname. What do you want to do?" 15 60 3 \
+            "1" "Courses" \
+            "2" "Personal Profile" \
+            "3" "Quit"  --cancel-button EXIT --ok-button OK  3>&1 1>&2 2>&3)
+            # echo -n "[ADMIN]>>> "
+            case "$OPTION" in
+                1)
+                    cmd="student_course" # 已完成
+                    ;;
+                2)
+                    cmd="student_personal_profile" # 已完成
+                    ;;
+                3)
+                    cmd="quit" # 已完成
+                    ;;
+                *)
+                    ;;
+            esac
+        fi
+    #二级目录：管理员用户
+    elif [[ $cmd == "admin_account" ]]
+    then
+        OPTION1=$(whiptail --title "Administrator Account" --menu "Please choose an operation on admin account:" 15 60 4 \
+        "1" "List" \
+        "2" "Add" \
+        "3" "Edit" \
+        "4" "Delete"  --cancel-button BACK --ok-button OK 3>&1 1>&2 2>&3)
+
+        exitstatus=$?
+        #用户选择cancel，返回一级目录
+        if [ $exitstatus = 1 ]
+        then
+            cmd=""
+            continue
+        fi
+        
+        accountOptionJudge $OPTION1 0
+
+        continue #继续循环
+    #二级目录：教师用户
+    elif [[ $cmd == "teacher_account" ]]
+    then
+        OPTION1=$(whiptail --title "Teacher Account" --menu "Please choose an operation on teacher account:" 15 60 4 \
+        "1" "List" \
+        "2" "Add" \
+        "3" "Edit" \
+        "4" "Delete"  --cancel-button BACK --ok-button OK 3>&1 1>&2 2>&3)
+
+        exitstatus=$?
+        #用户选择cancel，返回一级目录
+        if [ $exitstatus = 1 ]
+        then
+            cmd=""
+            continue
+        fi
+        
+        accountOptionJudge $OPTION1 1
+
+        continue #继续循环
+    #二级目录：学生用户
+    elif [[ $cmd == "student_account" ]]
+    then
+        OPTION1=$(whiptail --title "Student Account" --menu "Please choose an operation on student account:" 15 60 4 \
+        "1" "List" \
+        "2" "Add" \
+        "3" "Edit" \
+        "4" "Delete"  --cancel-button BACK --ok-button OK 3>&1 1>&2 2>&3)
+
+        exitstatus=$?
+        #用户选择cancel，返回一级目录
+        if [ $exitstatus = 1 ]
+        then
+            cmd=""
+            continue
+        fi
+        
+        accountOptionJudge $OPTION1 2
+
+        continue #继续循环
+    elif [[ $cmd == "admin_personal_profile" ]]
+    then
+        editPersonalProfile 0
+        cmd=""
+        continue #回到主目录
+    elif [[ $cmd == "teacher_personal_profile" ]]
+    then
+        editPersonalProfile 1
+        cmd=""
+        continue #回到主目录
+    elif [[ $cmd == "student_personal_profile" ]]
+    then
+        editPersonalProfile 2
+        cmd=""
+        continue #回到主目录
+    #管理员对所有课程进行操作
+    elif [[ $cmd == "admin_course" ]]
+    then
+        OPTION1=$(whiptail --title "Courses" --menu "Please choose an operation on course:" 15 60 4 \
+        "1" "List" \
+        "2" "Add" \
+        "3" "Edit" \
+        "4" "Delete"  --cancel-button BACK --ok-button OK 3>&1 1>&2 2>&3)
+
+        exitstatus=$?
+        #用户选择cancel，返回一级目录
+        if [ $exitstatus = 1 ]
+        then
+            cmd=""
+            continue
+        fi
+        
+        adminCourseOptionJudge $OPTION1
+
+        continue #继续循环
+    #教师对自己的课程进行操作
+    elif [[ $cmd == "teacher_course" ]]
+    then
+        OPTION1=$(whiptail --title "Courses" --menu "Please choose an operation on course:" 15 60 4 \
+        "1" "List Your Courses" \
+        "2" "Bind Student Account" \
+        "3" "Course Info" \
+        "4" "Homework/Lab"  --cancel-button BACK --ok-button OK 3>&1 1>&2 2>&3)
+
+        exitstatus=$?
+        #用户选择cancel，返回一级目录
+        if [ $exitstatus = 1 ]
+        then
+            cmd=""
+            continue
+        fi
+
+        teacherCourseOptionJudge $OPTION1
+
+        continue #继续循环
+    elif [[ $cmd == "teacher_course_student_account" ]]
+    then
+        OPTION1=$(whiptail --title "Bind Student Account" --menu "Please choose an operation:" 15 60 3 \
+        "1" "List Student Account Bound to Course" \
+        "2" "Bind New Student Account to Course" \
+        "3" "Remove Student Account from Course" --cancel-button BACK --ok-button OK 3>&1 1>&2 2>&3)
+
+        exitstatus=$?
+        #用户选择cancel，返回上一级目录
+        if [ $exitstatus = 1 ]
+        then
+            cmd="teacher_course"
+            continue
+        fi
+
+        teacherCourseBindStudentAccount $OPTION1
+
+        continue #继续循环
+    elif [[ $cmd == "teacher_course_course_info" ]]
+    then
+        OPTION1=$(whiptail --title "Course Info" --menu "Please choose an operation:" 15 60 4 \
+        "1" "List" \
+        "2" "Add" \
+        "3" "Edit" \
+        "4" "Delete" --cancel-button BACK --ok-button OK 3>&1 1>&2 2>&3)
+
+        exitstatus=$?
+        #用户选择cancel，返回上一级目录
+        if [ $exitstatus = 1 ]
+        then
+            cmd="teacher_course"
+            continue
+        fi
+
+        teacherCourseCourseInfo $OPTION1
+
+        continue #继续循环
+    elif [[ $cmd == "teacher_course_hw" ]]
+    then
+        OPTION1=$(whiptail --title "Homework" --menu "Please choose an operation:" 15 60 6 \
+        "1" "List" \
+        "2" "Add" \
+        "3" "Edit" \
+        "4" "Delete"\
+        "5" "Check Completion Table" \
+        "6" "Score" --cancel-button BACK --ok-button OK 3>&1 1>&2 2>&3)
+
+        exitstatus=$?
+        #用户选择cancel，返回上一级目录
+        if [ $exitstatus = 1 ]
+        then
+            cmd="teacher_course"
+            continue
+        fi
+
+        teacherCourseHW $OPTION1
+
+        continue #继续循环
+    #学生对自己所选的课程进行操作
+    elif [[ $cmd == "student_course" ]]
+    then
+        OPTION1=$(whiptail --title "Courses" --menu "Please choose an operation on course:" 15 60 3 \
+        "1" "List Your Courses" \
+        "2" "Check All Homework Completion" \
+        "3" "Do Homework"  --cancel-button BACK --ok-button OK 3>&1 1>&2 2>&3)
+
+        exitstatus=$?
+        #用户选择cancel，返回一级目录
+        if [ $exitstatus = 1 ]
+        then
+            cmd=""
+            continue
+        fi
+
+        studentCourseOptionJudge $OPTION1
+
+        continue #继续循环
+    else
+        cmd=""
+        continue
+    fi
+done
+
+echo "Goodbye!"
