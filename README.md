@@ -2,7 +2,7 @@
 
 ![visitors](https://visitor-badge.laobi.icu/badge?page_id=vtu.HWMS)
 
-[This repository](https://github.com/vtu81/HWMS) contains a **H**ome**W**ork **M**anagement **S**ystem, helping administrator, teachers and students to managage courses and homework.
+[This repository](https://github.com/vtu81/HWMS) contains a **H**ome**W**ork **M**anagement **S**ystem, helping administrators, teachers and students managage courses and homework.
 
 ## File Directory
 
